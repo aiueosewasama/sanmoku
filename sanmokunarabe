@@ -1,0 +1,259 @@
+<?php
+// PHPコードブロックの開始
+
+// --- 1. セッションの開始と初期化 ---
+session_start();
+
+// 定数の定義
+const PLAYER_MARK = 'O'; // プレイヤーの手
+const COMPUTER_MARK = 'X'; // コンピュータの手
+const EMPTY_CELL = ''; // 空のマス
+
+// ボードの初期状態 (3x3の配列)
+$initial_board = array_fill(0, 3, array_fill(0, 3, EMPTY_CELL));
+
+// セッションにボード情報がない場合は初期化
+if (!isset($_SESSION['board'])) {
+    $_SESSION['board'] = $initial_board;
+    $_SESSION['status'] = 'playing'; // playing, win_player, win_computer, draw
+    $_SESSION['turn'] = PLAYER_MARK; // プレイヤーから開始
+}
+
+$board = &$_SESSION['board'];
+$status = &$_SESSION['status'];
+$turn = &$_SESSION['turn'];
+$message = ''; // ユーザーへのメッセージ
+
+// --- 2. 勝敗判定ロジック ---
+
+/**
+ * 現在のボードの状態をチェックし、勝者または引き分けを判定する
+ * @param array $board 3x3のボード配列
+ * @return string 'playing', 'win_player', 'win_computer', 'draw' のいずれか
+ */
+function check_status($board) {
+    // 勝利条件のチェック (行、列、対角線)
+    $lines = [];
+    
+    // 行
+    for ($i = 0; $i < 3; $i++) { $lines[] = $board[$i]; }
+    // 列
+    for ($j = 0; $j < 3; $j++) { $lines[] = [$board[0][$j], $board[1][$j], $board[2][$j]]; }
+    // 対角線
+    $lines[] = [$board[0][0], $board[1][1], $board[2][2]]; // 左上から右下
+    $lines[] = [$board[0][2], $board[1][1], $board[2][0]]; // 右上から左下
+
+    foreach ($lines as $line) {
+        if ($line[0] !== EMPTY_CELL && $line[0] === $line[1] && $line[1] === $line[2]) {
+            return ($line[0] === PLAYER_MARK) ? 'win_player' : 'win_computer';
+        }
+    }
+
+    // 引き分け判定 (空のマスが残っているか)
+    $is_full = true;
+    foreach ($board as $row) {
+        if (in_array(EMPTY_CELL, $row)) {
+            $is_full = false;
+            break;
+        }
+    }
+
+    if ($is_full) {
+        return 'draw';
+    }
+
+    return 'playing';
+}
+
+// --- 3. コンピュータの思考ロジック (簡易的なランダム選択) ---
+
+/**
+ * コンピュータの手を決定する (空いているマスからランダムに選択)
+ * @param array $board 3x3のボード配列
+ * @return array|null [row, col] の配列、またはnull（打つ場所がない場合）
+ */
+function get_computer_move($board) {
+    $empty_cells = [];
+    for ($r = 0; $r < 3; $r++) {
+        for ($c = 0; $c < 3; $c++) {
+            if ($board[$r][$c] === EMPTY_CELL) {
+                $empty_cells[] = [$r, $c];
+            }
+        }
+    }
+
+    if (!empty($empty_cells)) {
+        $randomIndex = array_rand($empty_cells);
+        return $empty_cells[$randomIndex];
+    }
+    return null;
+}
+
+
+// --- 4. フォーム処理 (ユーザーの手の受け付け) ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    
+    // リセットボタンが押された場合
+    if (isset($_POST['reset'])) {
+        $_SESSION['board'] = $initial_board;
+        $_SESSION['status'] = 'playing';
+        $_SESSION['turn'] = PLAYER_MARK;
+        $message = 'ゲームをリセットしました。あなたの手番です。';
+        // リダイレクトしてPOSTデータをクリア
+        header('Location: sanmoku.php');
+        exit;
+    }
+
+    // プレイヤーの手番であり、かつゲームが進行中の場合
+    if ($status === 'playing' && $turn === PLAYER_MARK && isset($_POST['row']) && isset($_POST['col'])) {
+        
+        $r = (int)$_POST['row'];
+        $c = (int)$_POST['col'];
+
+        // 有効なマスかチェック
+        if ($r >= 0 && $r < 3 && $c >= 0 && $c < 3 && $board[$r][$c] === EMPTY_CELL) {
+            
+            // プレイヤーの手を配置
+            $board[$r][$c] = PLAYER_MARK;
+            
+            // 状態チェック
+            $status = check_status($board);
+
+            if ($status === 'playing') {
+                $turn = COMPUTER_MARK;
+                $message = 'コンピュータの手番です...';
+            }
+        
+        } else {
+            $message = '無効なマスです。空いているマスを選んでください。';
+        }
+    }
+
+    // --- 5. コンピュータのターンの実行 ---
+    // プレイヤーが手を打ち、まだゲームが続行中で、かつコンピュータの手番の場合
+    if ($status === 'playing' && $turn === COMPUTER_MARK) {
+        
+        $comp_move = get_computer_move($board);
+        
+        if ($comp_move !== null) {
+            list($r, $c) = $comp_move;
+            $board[$r][$c] = COMPUTER_MARK;
+            
+            // 状態チェック
+            $status = check_status($board);
+            
+            if ($status === 'playing') {
+                $turn = PLAYER_MARK;
+                $message = 'あなたの手番です (O)。';
+            }
+        }
+    }
+
+    // ゲーム終了後のメッセージ設定
+    if ($status !== 'playing') {
+        if ($status === 'win_player') {
+            $message = '🎉 **あなたの勝ちです！** おめでとうございます！';
+        } elseif ($status === 'win_computer') {
+            $message = '😢 **コンピュータの勝ちです...** 残念！';
+        } else {
+            $message = '🤝 **引き分け（あいこ）** です！';
+        }
+    }
+    
+    // コンピュータが手を打ったら、ブラウザをリロードして最新のボードを表示（連続POSTを防ぐため）
+    if ($status === 'playing' && $turn === PLAYER_MARK && isset($_POST['row'])) {
+        header('Location: sanmoku.php');
+        exit;
+    }
+} else {
+    // 最初のアクセス時またはリセット後のメッセージ
+    if ($status === 'playing') {
+        $message = 'あなたの手番です (O)。マスをクリックしてください。';
+    }
+}
+
+// --- 6. HTMLの表示 ---
+?>
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>PHP三目並べゲーム</title>
+    <style>
+        body { font-family: 'Arial', sans-serif; text-align: center; margin-top: 50px; background-color: #f0f0f0; }
+        .container { width: fit-content; margin: 0 auto; padding: 20px; border-radius: 10px; background-color: white; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        h1 { color: #333; }
+        .board { display: grid; grid-template-columns: repeat(3, 100px); grid-template-rows: repeat(3, 100px); margin: 20px auto; border: 3px solid #333; }
+        .cell {
+            width: 100%; height: 100%;
+            border: 1px solid #aaa;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 48px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.1s;
+        }
+        .cell:hover { background-color: #eee; }
+        .cell-played { cursor: default !important; }
+        .cell-O { color: #007bff; }
+        .cell-X { color: #dc3545; }
+        .message { padding: 10px; margin-bottom: 20px; border-radius: 5px; font-size: 1.2em; }
+        .message-win { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .message-lose { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .message-draw { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+        .message-normal { background-color: #e9ecef; color: #495057; border: 1px solid #ced4da; }
+        
+        /* ゲーム終了時のセルのホバー効果を無効化 */
+        <?php if ($status !== 'playing'): ?>
+        .cell { pointer-events: none; }
+        <?php endif; ?>
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>❌⭕ 三目並べ (Tic-Tac-Toe) </h1>
+        
+        <?php
+            $msg_class = 'message-normal';
+            if ($status === 'win_player') $msg_class = 'message-win';
+            elseif ($status === 'win_computer') $msg_class = 'message-lose';
+            elseif ($status === 'draw') $msg_class = 'message-draw';
+        ?>
+        <div class="message <?= $msg_class ?>">
+            <?= $message ?>
+        </div>
+
+        <div class="board">
+            <?php for ($r = 0; $r < 3; $r++): ?>
+                <?php for ($c = 0; $c < 3; $c++): ?>
+                    
+                    <?php if ($board[$r][$c] === EMPTY_CELL && $status === 'playing' && $turn === PLAYER_MARK): ?>
+                        <form method="POST" style="height: 100%; margin: 0;">
+                            <input type="hidden" name="row" value="<?= $r ?>">
+                            <input type="hidden" name="col" value="<?= $c ?>">
+                            <button type="submit" class="cell" title="このマスを選ぶ">
+                                </button>
+                        </form>
+                    <?php else: ?>
+                        <div class="cell cell-played cell-<?= $board[$r][$c] ?>">
+                            <?= htmlspecialchars($board[$r][$c]) ?>
+                        </div>
+                    <?php endif; ?>
+
+                <?php endfor; ?>
+            <?php endfor; ?>
+        </div>
+
+        <form method="POST" style="margin-top: 20px;">
+            <button type="submit" name="reset" style="padding: 10px 20px; font-size: 16px; cursor: pointer;">
+                最初からやり直す
+            </button>
+        </form>
+        
+        <p style="margin-top: 30px; font-size: 0.9em;">
+            プレイヤー: **<?= PLAYER_MARK ?>** (青) | コンピュータ: **<?= COMPUTER_MARK ?>** (赤)
+        </p>
+    </div>
+</body>
+</html>
